@@ -1,86 +1,222 @@
+import os
 import cv2
 import face_recognition
+from PIL import Image, ImageTk
+import tkinter as tk
+from tkinter import messagebox, filedialog
+import time
+import numpy as np
 
-# Initialize known face encodings and their details
-known_face_encodings = []
-known_faces = {
-    "Horth": {"Age": 19},
-    "Peaktra": {"Age": 19},
-    "Samoun Suon": {"Age": 19},
-    "Dy": {"Age": 19},
-    "Leak": {"Age": 19},
-    "Bopha": {"Age": 19},
-    "Kin": {"Age": 19},
-    "Knrork": {"Age": 19},
-    "Lin": {"Age": 19},
-    "Ny": {"Age": 19}
-}
+KNOWN_FACES_DIR = "known_faces"  # Folder where known face images are stored
 
-# Load and encode known faces
-try:
-    for i in range(1, 11):
-        person_image = face_recognition.load_image_file(f"person{i}.jpg")
-        person_encoding = face_recognition.face_encodings(person_image)[0]
-        known_face_encodings.append(person_encoding)
-except IndexError:
-    print("Error: One or more images did not contain any faces.")
-    exit()
+class FaceRecognitionApp:
+    def __init__(self, root):
+        self.root = root
+        self.root.title("Face Detection")
+        self.root.geometry("1000x600")  # Adjusted size for new layout
+        self.root.configure(bg="#FFFFFF")
 
-known_face_names = list(known_faces.keys())  # Get the names from the dictionary
+        # Variables
+        self.video_capture = None
+        self.known_face_encodings = []
+        self.known_face_names = []
+        self.running = True
+        self.recognition_mode = False
 
-# Capture video from webcam
-video_capture = cv2.VideoCapture(0)
+        # Configure Grid
+        self.root.grid_rowconfigure(0, weight=1)
+        self.root.grid_columnconfigure(0, weight=2)
+        self.root.grid_columnconfigure(1, weight=1)
 
-while True:
-    ret, frame = video_capture.read()
-    if not ret:
-        print("Failed to capture video.")
-        break
+        # Video Frame (Left Side)
+        self.video_label = tk.Label(self.root, bg="black")
+        self.video_label.grid(row=0, column=0, sticky="nsew", padx=10, pady=10)
 
-    # Flip the frame horizontally to avoid the mirror effect
-    frame = cv2.flip(frame, 1)
+        # Control Panel (Right Side)
+        self.control_frame = tk.Frame(self.root, bg="#FFFFFF", width=300)
+        self.control_frame.grid(row=0, column=1, sticky="nsew", padx=10, pady=10)
 
-    # Resize the frame to make the face recognition faster
-    small_frame = cv2.resize(frame, (0, 0), fx=0.25, fy=0.25)  # Reduce size by a quarter
+        # Title Label
+        self.title_label = tk.Label(
+            self.control_frame,
+            text="Welcome to Face Detection",
+            bg="#FFFFFF",
+            fg="black",
+            font=("Arial", 16, "bold"),
+        )
+        self.title_label.pack(pady=20)
 
-    # Convert the frame from BGR to RGB (face_recognition works on RGB)
-    rgb_small_frame = cv2.cvtColor(small_frame, cv2.COLOR_BGR2RGB)
+        # Recognized Name Label (Large Display for Name)
+        self.name_label = tk.Label(
+            self.control_frame,
+            text="Name: Unknown",
+            bg="#FFFFFF",
+            fg="purple",
+            font=("Arial", 18, "bold"),
+        )
+        self.name_label.pack(pady=10)
 
-    # Detect faces and encode them
-    face_locations = face_recognition.face_locations(rgb_small_frame)
-    face_encodings = face_recognition.face_encodings(rgb_small_frame, face_locations)
+        # Recognized Faces List
+        self.recognized_faces_label = tk.Label(
+            self.control_frame,
+            text="Recognized Faces:",
+            bg="#FFFFFF",
+            fg="black",
+            font=("Arial", 12, "bold"),
+        )
+        self.recognized_faces_label.pack(pady=10)
 
-    for (top, right, bottom, left), face_encoding in zip(face_locations, face_encodings):
-        # Compare with known faces
-        matches = face_recognition.compare_faces(known_face_encodings, face_encoding)
+        self.recognized_faces_listbox = tk.Listbox(self.control_frame, font=("Arial", 10), height=10)
+        self.recognized_faces_listbox.pack(pady=10, fill="both", expand=True)
+
+        # Buttons for Control
+        self.recognize_button = tk.Button(
+            self.control_frame,
+            text="Start Recognition",
+            command=self.toggle_recognition,
+            font=("Arial", 12),
+            bg="#0078D7",
+            fg="white",
+        )
+        self.recognize_button.pack(pady=10, fill="x")
+
+        self.screenshot_button = tk.Button(
+            self.control_frame,
+            text="Take Screenshot",
+            command=self.take_screenshot,
+            font=("Arial", 12),
+            bg="#0078D7",
+            fg="white",
+        )
+        self.screenshot_button.pack(pady=10, fill="x")
+
+        self.exit_button = tk.Button(
+            self.control_frame,
+            text="Exit",
+            command=self.on_close,
+            font=("Arial", 12),
+            bg="#D70000",
+            fg="white",
+        )
+        self.exit_button.pack(pady=10, fill="x")
+
+        # Footer Label
+        self.footer_label = tk.Label(
+            self.control_frame,
+            text="Advanced Security System © 2024",
+            bg="#FFFFFF",
+            fg="#888888",
+            font=("Arial", 8),
+        )
+        self.footer_label.pack(side="bottom", pady=10)
+
+        # Load known faces
+        self.load_known_faces()
+
+        # Initialize video capture
+        self.video_capture = cv2.VideoCapture(0)
+        self.update_frame()
+
+    def load_known_faces(self):
+        """Load known face encodings and names."""
+        if not os.path.exists(KNOWN_FACES_DIR):
+            messagebox.showerror("Error", f"Directory '{KNOWN_FACES_DIR}' not found!")
+            return
+
+        for file_name in os.listdir(KNOWN_FACES_DIR):
+            file_path = os.path.join(KNOWN_FACES_DIR, file_name)
+            if file_name.lower().endswith(('.jpg', '.jpeg', '.png')):
+                try:
+                    name = os.path.splitext(file_name)[0]
+                    image = face_recognition.load_image_file(file_path)
+                    encodings = face_recognition.face_encodings(image)
+                    if len(encodings) > 0:
+                        self.known_face_encodings.append(encodings[0])
+                        self.known_face_names.append(name)
+                except Exception as e:
+                    print(f"Error processing {file_name}: {e}")
+
+    def toggle_recognition(self):
+        """Toggle recognition mode."""
+        self.recognition_mode = not self.recognition_mode
+        if self.recognition_mode:
+            self.recognize_button.config(text="Stop Recognition")
+        else:
+            self.recognize_button.config(text="Start Recognition")
+
+    def update_frame(self):
+        """Update the video frame in real-time."""
+        if not self.running:
+            return
+
+        ret, frame = self.video_capture.read()
+        if not ret:
+            self.stop_recognition()
+            return
+
+        start_time = time.time()
+        frame = cv2.flip(frame, 1)  # Flip horizontally
+
         name = "Unknown"
+        if self.recognition_mode:
+            small_frame = cv2.resize(frame, (0, 0), fx=0.5, fy=0.5)
+            rgb_small_frame = cv2.cvtColor(small_frame, cv2.COLOR_BGR2RGB)
 
-        # Find the best match
-        if True in matches:
-            first_match_index = matches.index(True)
-            name = known_face_names[first_match_index]
+            face_locations = face_recognition.face_locations(rgb_small_frame)
+            face_encodings = face_recognition.face_encodings(rgb_small_frame, face_locations)
 
-        # Display only the name
-        display_text = name
+            for (top, right, bottom, left), face_encoding in zip(face_locations, face_encodings):
+                matches = face_recognition.compare_faces(self.known_face_encodings, face_encoding)
+                face_distances = face_recognition.face_distance(self.known_face_encodings, face_encoding)
+                
+                # Only use the best match (smallest distance)
+                best_match_index = np.argmin(face_distances)
 
-        # Scale back up face locations since the frame we detected in was scaled to 1/4 size
-        top *= 4
-        right *= 4
-        bottom *= 4
-        left *= 4
+                if matches[best_match_index]:
+                    name = self.known_face_names[best_match_index]
 
-        # Draw a rectangle around the face with a green color
-        cv2.rectangle(frame, (left, top), (right, bottom), (0, 255, 0), 2)
-        cv2.putText(frame, display_text, (left, top - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 255, 0), 2)
+                # Draw box and label on frame
+                cv2.rectangle(frame, (left * 2, top * 2), (right * 2, bottom * 2), (0, 255, 0), 2)
+                cv2.putText(frame, name, (left * 2, top * 2 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 255, 0), 2)
 
-    # Display the result
-    cv2.imshow('Video', frame)
+        # Update name label in the interface
+        self.name_label.config(text=f"Name: {name}")
 
-    # Break the loop on 'q' key press
-    if cv2.waitKey(1) & 0xFF == ord('q'):
-        break
+        # Convert frame to ImageTk
+        img = Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
+        imgtk = ImageTk.PhotoImage(image=img)
+        self.video_label.imgtk = imgtk
+        self.video_label.configure(image=imgtk)
 
-# Release resources
-video_capture.release()
-cv2.destroyAllWindows()
- 
+        self.root.after(10, self.update_frame)
+
+    def take_screenshot(self):
+        """Take and save a screenshot."""
+        if self.video_capture:
+            ret, frame = self.video_capture.read()
+            if ret:
+                file_path = filedialog.asksaveasfilename(
+                    defaultextension=".jpg", filetypes=[("JPEG files", "*.jpg"), ("All files", "*.*")]
+                )
+                if file_path:
+                    cv2.imwrite(file_path, frame)
+                    messagebox.showinfo("Success", "Screenshot saved successfully!")
+
+    def stop_recognition(self):
+        """Stop video capture and close the app."""
+        self.running = False
+        if self.video_capture:
+            self.video_capture.release()
+        self.video_label.config(image="")
+
+    def on_close(self):
+        """Handle window close event."""
+        self.stop_recognition()
+        self.root.destroy()
+
+
+if __name__ == "__main__":
+    root = tk.Tk()
+    app = FaceRecognitionApp(root)
+    root.protocol("WM_DELETE_WINDOW", app.on_close)
+    root.mainloop()
