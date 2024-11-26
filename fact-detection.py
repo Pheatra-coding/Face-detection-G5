@@ -6,8 +6,10 @@ import tkinter as tk
 from tkinter import messagebox, filedialog
 import time
 import numpy as np
+from openpyxl import Workbook, load_workbook
 
 KNOWN_FACES_DIR = "known_faces"  # Folder where known face images are stored
+ATTENDANCE_FILE = "attendance.xlsx"  # Excel file for recording attendance
 
 class FaceRecognitionApp:
     def __init__(self, root):
@@ -22,6 +24,7 @@ class FaceRecognitionApp:
         self.known_face_names = []
         self.running = True
         self.recognition_mode = False
+        self.recognized_faces_today = set()  # To keep track of today's recognized faces
 
         # Configure Grid
         self.root.grid_rowconfigure(0, weight=1)
@@ -117,6 +120,9 @@ class FaceRecognitionApp:
         self.video_capture = cv2.VideoCapture(0)
         self.update_frame()
 
+        # Initialize or load the attendance file
+        self.initialize_attendance_file()
+
     def load_known_faces(self):
         """Load known face encodings and names."""
         if not os.path.exists(KNOWN_FACES_DIR):
@@ -136,6 +142,15 @@ class FaceRecognitionApp:
                 except Exception as e:
                     print(f"Error processing {file_name}: {e}")
 
+    def initialize_attendance_file(self):
+        """Initialize or load the attendance Excel file."""
+        if not os.path.exists(ATTENDANCE_FILE):
+            wb = Workbook()
+            ws = wb.active
+            ws.title = "Attendance"
+            ws.append(["Name", "Date", "Time"])
+            wb.save(ATTENDANCE_FILE)
+
     def toggle_recognition(self):
         """Toggle recognition mode."""
         self.recognition_mode = not self.recognition_mode
@@ -154,7 +169,6 @@ class FaceRecognitionApp:
             self.stop_recognition()
             return
 
-        start_time = time.time()
         frame = cv2.flip(frame, 1)  # Flip horizontally
 
         name = "Unknown"
@@ -175,6 +189,12 @@ class FaceRecognitionApp:
                 if matches[best_match_index]:
                     name = self.known_face_names[best_match_index]
 
+                    # Record attendance if recognized face is not already recorded today
+                    if name not in self.recognized_faces_today:
+                        self.recognized_faces_today.add(name)
+                        self.record_attendance(name)
+                        self.recognized_faces_listbox.insert(tk.END, name)
+
                 # Draw box and label on frame
                 cv2.rectangle(frame, (left * 2, top * 2), (right * 2, bottom * 2), (0, 255, 0), 2)
                 cv2.putText(frame, name, (left * 2, top * 2 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 255, 0), 2)
@@ -191,7 +211,7 @@ class FaceRecognitionApp:
         self.root.after(10, self.update_frame)
 
     def take_screenshot(self):
-        """Take and save a screenshot."""
+        """Take and save a screenshot and record attendance."""
         if self.video_capture:
             ret, frame = self.video_capture.read()
             if ret:
@@ -200,7 +220,20 @@ class FaceRecognitionApp:
                 )
                 if file_path:
                     cv2.imwrite(file_path, frame)
+                    name = self.name_label.cget("text").replace("Name: ", "")
+                    if name != "Unknown":
+                        self.record_attendance(name)
                     messagebox.showinfo("Success", "Screenshot saved successfully!")
+
+    def record_attendance(self, name):
+        """Record attendance to the Excel file."""
+        if name != "Unknown":
+            wb = load_workbook(ATTENDANCE_FILE)
+            ws = wb.active
+            current_time = time.strftime("%Y-%m-%d %H:%M:%S")
+            ws.append([name, current_time.split()[0], current_time.split()[1]])
+            wb.save(ATTENDANCE_FILE)
+            # print(f"Attendance recorded for {name} at {current_time}")
 
     def stop_recognition(self):
         """Stop video capture and close the app."""
@@ -213,7 +246,6 @@ class FaceRecognitionApp:
         """Handle window close event."""
         self.stop_recognition()
         self.root.destroy()
-
 
 if __name__ == "__main__":
     root = tk.Tk()
