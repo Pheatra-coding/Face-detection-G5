@@ -6,8 +6,12 @@ import tkinter as tk
 from tkinter import messagebox, filedialog
 import time
 import numpy as np
+import pandas as pd
+from datetime import datetime
 
+# Constants
 KNOWN_FACES_DIR = "known_faces"
+EXCEL_LOG_FILE = "face_recognition_log.xlsx"
 CONFIDENCE_THRESHOLD = 0.5  # Lower value means stricter matching
 
 class FaceRecognitionApp:
@@ -27,6 +31,7 @@ class FaceRecognitionApp:
         self.fps_times = []
         self.last_logged_name = None
         self.last_logged_time = None
+        self.recognized_faces = set()
 
         # Configure Grid
         self.root.grid_rowconfigure(0, weight=1)
@@ -184,11 +189,10 @@ class FaceRecognitionApp:
                         box_color = (0, 255, 0)  # Green for recognized faces
                         text_color = (0, 255, 0)
 
-                    if name not in self.recognized_faces_listbox.get(0, tk.END):
+                    if name not in self.recognized_faces:
+                        self.recognized_faces.add(name)
                         self.recognized_faces_listbox.insert(tk.END, name)
-
-                    # Log face recognition event with name and timestamp if it's a new recognition
-                    self.log_recognition(name)
+                        self.log_recognition(name)
 
                 top *= 2
                 right *= 2
@@ -214,35 +218,38 @@ class FaceRecognitionApp:
 
     def log_recognition(self, name):
         """Log recognized face with timestamp to the log file only if it's a new recognition."""
-        current_time = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
-        if name != self.last_logged_name or current_time != self.last_logged_time:
-            log_entry = f"Name: {name}, Time: {current_time}\n"
-            with open("face_recognition_log.txt", "a") as log_file:
-                log_file.write(log_entry)
-            self.last_logged_name = name
-            self.last_logged_time = current_time
+        current_time = datetime.now().strftime("%H:%M:%S")
+        current_date = datetime.now().strftime("%Y-%m-%d")
+
+        # Initialize dataframe if file doesn't exist
+        if not os.path.exists(EXCEL_LOG_FILE):
+            df = pd.DataFrame(columns=["Name", "Date", "Time"])
+        else:
+            df = pd.read_excel(EXCEL_LOG_FILE)
+
+        # Append the new recognition only if it's a new entry
+        df = pd.concat([df, pd.DataFrame({"Name": [name], "Date": [current_date], "Time": [current_time]})], ignore_index=True)
+        df.to_excel(EXCEL_LOG_FILE, index=False)
 
     def take_screenshot(self):
         """Take a screenshot of the current frame."""
         ret, frame = self.video_capture.read()
         if ret:
-            screenshot_file = filedialog.asksaveasfilename(defaultextension=".png", filetypes=[("PNG Files", "*.png"), ("All Files", "*.*")])
-            if screenshot_file:
-                cv2.imwrite(screenshot_file, frame)
-                messagebox.showinfo("Success", "Screenshot saved successfully!")
+            timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+            screenshot_file = f"screenshot_{timestamp}.jpg"
+            cv2.imwrite(screenshot_file, frame)
+            messagebox.showinfo("Screenshot", f"Screenshot saved as {screenshot_file}")
 
     def stop_recognition(self):
-        """Stop video capture and close the app."""
+        """Stop recognition mode."""
         self.running = False
-        if self.video_capture:
-            self.video_capture.release()
-        self.video_label.config(image="")
+        self.video_capture.release()
+        cv2.destroyAllWindows()
 
     def on_close(self):
-        """Handle window close event."""
+        """Handle the window close event."""
         self.stop_recognition()
-        self.root.destroy()
-
+        self.root.quit()
 
 if __name__ == "__main__":
     root = tk.Tk()
